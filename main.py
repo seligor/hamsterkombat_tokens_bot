@@ -8,7 +8,7 @@ import datetime
 import asyncio
 from contextlib import contextmanager
 
-START_MESSAGE = "Привет! Отправь /get_records, чтобы получить записи."
+START_MESSAGE = "Привет! Отправь /get_records, чтобы получить токены."
 LIMIT_REACHED_MESSAGE = "Вы уже получили 24 токенов сегодня. Попробуйте снова завтра."
 NO_RECORDS_MESSAGE = "Нет доступных записей на сегодня."
 
@@ -89,7 +89,7 @@ async def get_records_command(message: types.Message):
         types = ["CLONE", "CUBE", "TRAIN", "BIKE", "MERGE", "TWERK"]
         records = []
 
-        remainning_tokens = 24 - issued_tokens_count
+        remaining_tokens = 24 - issued_tokens_count
         for record_type in types:
             records.extend(
                 session.query(Record)

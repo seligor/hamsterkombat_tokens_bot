@@ -9,6 +9,7 @@ chmod a+x install.sh
 ./install.sh
 ```
 Настройка:
+
 В START.sh указать строку подключения к СУБД и ID бота, полученный у https://t.me/BotFather
 
 Запускать можно и с помощью START.sh, но я рекомендую установить screen и запускать start.sh

@@ -1,28 +1,39 @@
 import os
-import logging
+import sys
+from loguru import logger
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from sqlalchemy import create_engine, Column, Integer, String, Date, select, func
+from sqlalchemy import create_engine, distinct, Column, Integer, String, Date, select, desc, func
+#from sqlalchemy.ext.orderinglist import count_from_0
 from sqlalchemy.orm import sessionmaker, declarative_base
 import datetime
 import asyncio
 from contextlib import contextmanager
 
-START_MESSAGE = "Привет! Отправь /get_records, чтобы получить токены."
-LIMIT_REACHED_MESSAGE = "Вы уже получили 24 токенов сегодня. Попробуйте снова завтра."
-NO_RECORDS_MESSAGE = "Нет доступных записей на сегодня."
 
+START_MESSAGE = "Привет! Отправь /get_records, чтобы получить записи."
+LIMIT_REACHED_MESSAGE = f"Вы уже получили допустимый лимит токенов сегодня. Попробуйте снова завтра."
+NO_RECORDS_MESSAGE = "Нет доступных записей на сегодня."
 
 # Configuration from environment variables
 API_TOKEN = os.getenv('API_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+
+logger.remove()
+logger.add(sink=sys.stdout,
+           format="<white>{time:YYYY-MM-DD HH:mm:ss}</white> | "
+                  "<level>{level: <8}</level> | "
+                  "<cyan><b>{line}</b></cyan> - "
+                  "<white><b>{message}</b></white>",
+           colorize=True,
+           level = "DEBUG")
+
+
 if not API_TOKEN or not DATABASE_URL:
-    logging.critical("API_TOKEN and DATABASE_URL must be set")
+    logger.critical("API_TOKEN and DATABASE_URL must be set")
     raise EnvironmentError("API_TOKEN and DATABASE_URL must be set")
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
 
 # Database setup
 Base = declarative_base()
@@ -36,7 +47,7 @@ try:
     )
 
 except Exception as e:
-    logging.error(f"Failed to create engine: {e}")
+    logger.error(f"Failed to create engine: {e}")
     raise
 Session = sessionmaker(bind=engine)
 
@@ -47,7 +58,7 @@ def get_session():
         yield session
     except Exception as e:
         session.rollback()
-        logging.error(f"Session error: {e}")
+        logger.error(f"Session error: {e}")
         raise
     finally:
         session.close()
@@ -67,13 +78,25 @@ dp = Dispatcher()
 
 today = datetime.date.today()
 
+def get_types():
+    with get_session() as session:
+        prefix_list = []
+        subquery = session.query(Record.content).order_by(desc(Record.id)).limit(25).subquery()
+        query = session.query(distinct(func.substring_index(subquery.c.content, '-', 1)).label('prefix'))
+        results = query.all()
+        for result in results:
+            prefix_list.append(result.prefix)
+        logger.debug(f"{prefix_list}, {len(prefix_list)}")
+        return prefix_list
+
+
 @dp.message(Command("start"))
 async def start_command(message: types.Message):
     await message.reply(START_MESSAGE)
 
 @dp.message(Command("get_records"))
 async def get_records_command(message: types.Message):
-    logging.debug(f"Processing /get_records command for user {message.from_user.id}")
+    logger.debug(f"Processing /get_records command for user {message.from_user.id}")
     user_id = message.from_user.id
 
     with get_session() as session:
@@ -81,15 +104,19 @@ async def get_records_command(message: types.Message):
             Record.user_id == user_id,
             Record.date_sent == today
         ).count()
+        types = get_types()
+        count_of_tokens = len(types)*4
 
-        if issued_tokens_count >= 24:
+
+        if issued_tokens_count >= count_of_tokens:
             await message.reply(LIMIT_REACHED_MESSAGE)
+            logger.info(f"LIMIT REACHED  {issued_tokens_count}")
             return
 
-        types = ["CLONE", "CUBE", "TRAIN", "BIKE", "MERGE", "TWERK"]
         records = []
 
-        remaining_tokens = 24 - issued_tokens_count
+
+        remaining_tokens = count_of_tokens - issued_tokens_count
         for record_type in types:
             records.extend(
                 session.query(Record)
@@ -104,11 +131,14 @@ async def get_records_command(message: types.Message):
             for idx in range(tokens_to_issue):
                 record = records[idx]
                 await message.answer(record.content)
+                logger.debug(f"Отправлен код {record.content}")
                 record.user_id = user_id
                 record.date_sent = today
                 session.commit()
+
         else:
             await message.reply(NO_RECORDS_MESSAGE)
+            logger.info(f"NO RECORDS {tokens_to_issue}")
 
 async def update_today_variable():
     global today
@@ -123,7 +153,7 @@ async def update_today_variable():
 
         # Update the `today` variable
         today = datetime.date.today()
-        logging.info("Updated the `today` variable for the new day.")
+        logger.info("Updated the `today` variable for the new day.")
 
 async def main():
     # Start the update_today_variable coroutine
@@ -132,9 +162,9 @@ async def main():
     await dp.start_polling(bot)
 
 
-
 if __name__ == '__main__':
     try:
+        logger.info(f"Program started")
         asyncio.run(main())
     except Exception as e:
-        logging.critical(f"Unhandled exception: {e}")
+        logger.critical(f"Unhandled exception: {e}")
